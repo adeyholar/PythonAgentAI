@@ -34,24 +34,25 @@ class ChattyAgent:
         if "hello" in command:
             return {"action": "greet"}
         elif any(kw in command for kw in ["add task", "schedule task", "schedule recurring"]):
-            if ":" in command:
-                parts = command.split(":", 1)
-                desc = parts[0].replace("add task", "").replace("schedule task", "").replace("schedule recurring", "").strip()
-                if not desc:
-                    return {"action": "unknown", "message": "Please provide a task description!"}
-                time_match = None
-                for t in ["at", "for", "in"]:
-                    if t in command:
-                        time_str = command.split(t)[1].strip()
-                        try:
-                            time_match = parse(time_str, fuzzy=True).strftime("%H:%M")
-                            break
-                        except ValueError:
-                            continue
-                if time_match:
-                    recurring = "recurring" in command
-                    return {"action": "schedule", "desc": desc, "time": time_match, "recurring": recurring}
-                return {"action": "add", "desc": desc}
+            if ":" not in command:
+                return {"action": "unknown", "message": "Please include a colon (e.g., 'schedule task:desc at HH:MM')!"}
+            parts = command.split(":", 1)
+            desc = parts[0].replace("add task", "").replace("schedule task", "").replace("schedule recurring", "").strip()
+            if not desc:
+                return {"action": "unknown", "message": "Please provide a task description before the colon (e.g., 'schedule task:check desk at 1:00')!"}
+            time_match = None
+            for t in ["at", "for", "in"]:
+                if t in command:
+                    time_str = command.split(t)[1].strip()
+                    try:
+                        time_match = parse(time_str, fuzzy=True).strftime("%H:%M")
+                        break
+                    except ValueError:
+                        continue
+            if time_match:
+                recurring = "recurring" in command
+                return {"action": "schedule", "desc": desc, "time": time_match, "recurring": recurring}
+            return {"action": "add", "desc": desc}
         elif "complete task" in command and ":" in command:
             _, task_time = command.split(":", 1)
             return {"action": "complete", "time": task_time.strip()}
