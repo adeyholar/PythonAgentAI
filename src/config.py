@@ -1,0 +1,21 @@
+# --- Configuration Constants ---
+DATA_DIR = "agent_data"
+TASKS_FILE = f"{DATA_DIR}/tasks.json"
+ALERT_SOUND_FILE = "alert.wav"
+BEEP_SOUND_FILE = "beep.wav"
+SCREEN_WIDTH = 800
+SCREEN_HEIGHT = 600
+FONT_SIZE = 24
+TEXT_COLOR = (255, 255, 255)
+BACKGROUND_COLOR = (30, 30, 30)
+AGENT_COLOR_IDLE = (0, 200, 255)
+AGENT_COLOR_GREETING = (0, 255, 0)
+AGENT_COLOR_EXITING = (255, 0, 0)
+AGENT_COLOR_ALERT = (255, 165, 0)
+CHECK_INTERVAL = 5
+OLLAMA_API_URL = "http://localhost:11434/api/generate"
+EMAIL_SERVER = "localhost"
+EMAIL_PORT = 1025
+EMAIL_FROM = "agent@local.com"
+EMAIL_TO = ["user1@local.com", "user2@local.com"]  # Update with your test emails
+BLOG_INTERVAL = 15 * 60  # 15 minutes in seconds for testing
