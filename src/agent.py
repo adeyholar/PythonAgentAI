@@ -36,6 +36,7 @@ class ChattyAgent:
         self.response_display = []  # Stores recent responses for display
         self.max_response_lines = 10  # Max lines to show in response area
         self.task_history = defaultdict(int)  # Track completed task frequency
+        self.feedback_history = defaultdict(int)  # Track user feedback on suggestions
 
         # --- UI Components ---
         pygame.init()
@@ -61,7 +62,7 @@ class ChattyAgent:
             return None
 
     def _load_state(self):
-        """Loads tasks, scheduled_tasks, completed_tasks, and task_history from JSON file."""
+        """Loads tasks, scheduled_tasks, completed_tasks, task_history, and feedback_history from JSON file."""
         if os.path.exists(TASKS_FILE):
             try:
                 with open(TASKS_FILE, "r", encoding="utf-8") as f:
@@ -70,6 +71,7 @@ class ChattyAgent:
                     self.scheduled_tasks = data.get("scheduled_tasks", {})
                     self.completed_tasks = data.get("completed_tasks", {})
                     self.task_history = defaultdict(int, data.get("task_history", {}))
+                    self.feedback_history = defaultdict(int, data.get("feedback_history", {}))
                 print(f"Loaded tasks and history from {TASKS_FILE}")
             except json.JSONDecodeError as e:
                 print(f"Error loading tasks from {TASKS_FILE}: Invalid JSON. Starting fresh. Error: {e}")
@@ -87,7 +89,8 @@ class ChattyAgent:
                     "tasks": self.tasks,
                     "scheduled_tasks": self.scheduled_tasks,
                     "completed_tasks": self.completed_tasks,
-                    "task_history": dict(self.task_history)
+                    "task_history": dict(self.task_history),
+                    "feedback_history": dict(self.feedback_history)
                 }, f, indent=4)
             print(f"Saved tasks and history to {TASKS_FILE}")
         except Exception as e:
@@ -115,7 +118,7 @@ class ChattyAgent:
                 return {"action": "unknown", "message": "Please provide a task description after 'add task:'!"}
             return {"action": "add", "desc": desc}
 
-        elif any(kw in command for kw in ["schedule task", "schedule recurring", "set priority"]) and ":" in command:
+        elif any(kw in command for kw in ["schedule task", "schedule recurring", "set priority", "feedback"]) and ":" in command:
             parts = command.split(":", 1)
             action_part = parts[0].strip()
             remaining = parts[1].strip()
@@ -162,6 +165,16 @@ class ChattyAgent:
                     return {"action": "set_priority", "task_time": task_time, "priority": new_priority}
                 except ValueError:
                     return {"action": "unknown", "message": f"Invalid priority value '{new_priority_str}'. Use 1-5 after 'to' (e.g., 'set priority:14:30:00 to 3')!"}
+            elif "feedback" in action_part and ":" in remaining:
+                suggestion = remaining.split(" on ")[0].strip() if " on " in remaining else remaining
+                feedback_value = remaining.split(" on ")[1].strip() if " on " in remaining else ""
+                try:
+                    feedback = 1 if "like" in feedback_value or "good" in feedback_value else -1 if "dislike" in feedback_value or "bad" in feedback_value else 0
+                    self.feedback_history[suggestion.lower()] += feedback
+                    response_text = f"Feedback recorded for '{suggestion}': {feedback_value}"
+                    return {"action": "feedback", "suggestion": suggestion, "feedback": feedback}
+                except ValueError:
+                    return {"action": "unknown", "message": f"Invalid feedback. Use 'feedback:suggestion on like/good' or 'feedback:suggestion on dislike/bad'!"}
 
         elif "complete task" in command and ":" in command:
             _, task_identifier = command.split(":", 1)
@@ -230,6 +243,9 @@ class ChattyAgent:
             if not found:
                 response_text = f"No scheduled task found with time '{task_time}'."
 
+        elif nlu_result["action"] == "feedback":
+            response_text = nlu_result.get("response_text", f"Feedback processed for '{nlu_result['suggestion']}'.")
+
         elif nlu_result["action"] == "complete":
             task_identifier = nlu_result["identifier"].lower()
             found = False
@@ -276,6 +292,7 @@ class ChattyAgent:
             self.scheduled_tasks.clear()
             self.completed_tasks.clear()
             self.task_history.clear()
+            self.feedback_history.clear()
             response_text = "All tasks cleared! I’m all fresh now!"
 
         elif nlu_result["action"] == "exit":
@@ -283,13 +300,13 @@ class ChattyAgent:
             response_text = "Catch you later! Saving my notes..."
 
         elif nlu_result["action"] == "unknown":
-            response_text = nlu_result.get("message", f"Oops! I’m puzzled. Try natural commands like ‘hello’, ‘add task:desc’, ‘schedule task:desc at HH:MM’, ‘schedule recurring:desc at HH:MM’, ‘set priority:TIME to PRIORITY’, ‘complete task:TIME_OR_DESC’, ‘review completed’, ‘list tasks’, ‘clear tasks’, or ‘exit’.")
+            response_text = nlu_result.get("message", f"Oops! I’m puzzled. Try natural commands like ‘hello’, ‘add task:desc’, ‘schedule task:desc at HH:MM’, ‘schedule recurring:desc at HH:MM’, ‘set priority:TIME to PRIORITY’, ‘feedback:SUGGESTION on LIKE/DISLIKE’, ‘complete task:TIME_OR_DESC’, ‘review completed’, ‘list tasks’, ‘clear tasks’, or ‘exit’.")
 
         self._add_response_to_display(response_text)
         return response_text
 
     def suggest_task(self):
-        """Provides a predictive task suggestion with prioritization."""
+        """Provides a predictive task suggestion with prioritization and user feedback."""
         current_time = datetime.now()
         suggestions = []
         for timestamp, task_data in self.scheduled_tasks.items():
@@ -303,14 +320,20 @@ class ChattyAgent:
             suggestions.sort(reverse=True)  # Sort by priority score (highest first)
             return suggestions[0][1]  # Return highest priority suggestion
 
-        # Predictive suggestion based on task history
+        # Predictive suggestion based on task history and feedback
         if self.task_history:
-            most_frequent_task = max(self.task_history.items(), key=lambda x: x[1])[0]
-            next_hour = (current_time.hour + 1) % 24
-            suggested_time = current_time.replace(hour=next_hour, minute=0, second=0)
-            if suggested_time < current_time:
-                suggested_time += timedelta(days=1)
-            return f"Based on your habits, how about scheduling {most_frequent_task} at {suggested_time.strftime('%H:%M')}?"
+            adjusted_history = {}
+            for task, frequency in self.task_history.items():
+                feedback = self.feedback_history.get(task.lower(), 0)
+                adjusted_score = frequency * (1 + feedback)  # Positive feedback increases score
+                adjusted_history[task] = adjusted_score
+            if adjusted_history:
+                most_frequent_task = max(adjusted_history.items(), key=lambda x: x[1])[0]
+                next_hour = (current_time.hour + 1) % 24
+                suggested_time = current_time.replace(hour=next_hour, minute=0, second=0)
+                if suggested_time < current_time:
+                    suggested_time += timedelta(days=1)
+                return f"Based on your habits, how about scheduling {most_frequent_task} at {suggested_time.strftime('%H:%M')}? (Provide feedback with 'feedback:{most_frequent_task} on like/good' or 'dislike/bad')"
         current_hour = current_time.hour
         if 12 <= current_hour < 14:
             return "Perhaps it's time to schedule lunch around 12:30?"

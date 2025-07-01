@@ -1,10 +1,12 @@
 {
     "tasks": {
-        "2025-07-01 16:47:00": "check desk"
+        "2025-07-01 16:47:00": "check desk",
+        "2025-07-01 16:57:26": "check desk"
     },
     "scheduled_tasks": {},
     "completed_tasks": {},
     "task_history": {
-        "check desk": 1
-    }
+        "check desk": 2
+    },
+    "feedback_history": {}
 }
