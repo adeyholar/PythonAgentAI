@@ -38,9 +38,10 @@ class ChattyAgent:
             if ":" not in command:
                 return {"action": "unknown", "message": "Please use a colon (e.g., 'schedule task:desc at 1:15')!"}
             parts = command.split(":", 1)
-            desc_part = parts[0].replace("add task", "").replace("schedule task", "").replace("schedule recurring", "").strip()
-            if not desc_part:
-                return {"action": "unknown", "message": "Please provide a task description before the colon (e.g., 'schedule task:check desk at 1:15')!"}
+            action_part = parts[0].strip()
+            desc_part = parts[1].split(" at ")[0].strip() if " at " in parts[1] else parts[1].strip()
+            if not desc_part or action_part in ["add task", "schedule task", "schedule recurring"]:
+                return {"action": "unknown", "message": "Please provide a task description after the colon (e.g., 'schedule task:check desk at 1:15')!"}
             time_match = None
             for t in ["at", "for", "in"]:
                 if t in command:
