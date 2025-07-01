@@ -6,6 +6,7 @@ import os
 import time
 import random
 from dateutil.parser import parse, ParserError  # Import ParserError for better error handling
+from collections import defaultdict
 
 # --- Configuration Constants ---
 DATA_DIR = "agent_data"
@@ -34,6 +35,7 @@ class ChattyAgent:
         self.input_buffer = ""
         self.response_display = []  # Stores recent responses for display
         self.max_response_lines = 10  # Max lines to show in response area
+        self.task_history = defaultdict(int)  # Track completed task frequency
 
         # --- UI Components ---
         pygame.init()
@@ -59,7 +61,7 @@ class ChattyAgent:
             return None
 
     def _load_state(self):
-        """Loads tasks, scheduled_tasks, and completed_tasks from JSON file."""
+        """Loads tasks, scheduled_tasks, completed_tasks, and task_history from JSON file."""
         if os.path.exists(TASKS_FILE):
             try:
                 with open(TASKS_FILE, "r", encoding="utf-8") as f:
@@ -67,7 +69,8 @@ class ChattyAgent:
                     self.tasks = data.get("tasks", {})
                     self.scheduled_tasks = data.get("scheduled_tasks", {})
                     self.completed_tasks = data.get("completed_tasks", {})
-                print(f"Loaded tasks from {TASKS_FILE}")
+                    self.task_history = defaultdict(int, data.get("task_history", {}))
+                print(f"Loaded tasks and history from {TASKS_FILE}")
             except json.JSONDecodeError as e:
                 print(f"Error loading tasks from {TASKS_FILE}: Invalid JSON. Starting fresh. Error: {e}")
             except Exception as e:
@@ -76,16 +79,17 @@ class ChattyAgent:
             print(f"No existing task file found at {TASKS_FILE}. Starting fresh.")
 
     def _save_state(self):
-        """Saves current task state to JSON file."""
+        """Saves current task state and history to JSON file."""
         os.makedirs(DATA_DIR, exist_ok=True)  # Ensure data directory exists
         try:
             with open(TASKS_FILE, "w", encoding="utf-8") as f:
                 json.dump({
                     "tasks": self.tasks,
                     "scheduled_tasks": self.scheduled_tasks,
-                    "completed_tasks": self.completed_tasks
+                    "completed_tasks": self.completed_tasks,
+                    "task_history": dict(self.task_history)
                 }, f, indent=4)
-            print(f"Saved tasks to {TASKS_FILE}")
+            print(f"Saved tasks and history to {TASKS_FILE}")
         except Exception as e:
             print(f"Error saving tasks to {TASKS_FILE}: {e}")
 
@@ -192,6 +196,7 @@ class ChattyAgent:
         elif nlu_result["action"] == "add":
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             self.tasks[timestamp] = nlu_result["desc"]
+            self.task_history[nlu_result["desc"].lower()] += 1  # Update task frequency
             response_text = f"Yay! Added task: {nlu_result['desc']} at {timestamp}!"
 
         elif nlu_result["action"] == "schedule":
@@ -232,6 +237,7 @@ class ChattyAgent:
                 if task_identifier in timestamp.lower() or task_identifier in self.tasks[timestamp].lower():
                     desc = self.tasks.pop(timestamp)
                     self.completed_tasks[timestamp] = desc
+                    self.task_history[desc.lower()] += 1  # Update task frequency
                     response_text = f"Great job! Marked '{desc}' ({timestamp}) as complete!"
                     found = True
                     break
@@ -241,6 +247,7 @@ class ChattyAgent:
                     if task_data and (task_identifier in timestamp.lower() or task_identifier in task_data["desc"].lower()):
                         desc = self.scheduled_tasks.pop(timestamp)["desc"]
                         self.completed_tasks[timestamp] = desc
+                        self.task_history[desc.lower()] += 1  # Update task frequency
                         response_text = f"Great job! Marked '{desc}' ({timestamp}) as complete!"
                         found = True
                         break
@@ -268,6 +275,7 @@ class ChattyAgent:
             self.tasks.clear()
             self.scheduled_tasks.clear()
             self.completed_tasks.clear()
+            self.task_history.clear()
             response_text = "All tasks cleared! I’m all fresh now!"
 
         elif nlu_result["action"] == "exit":
@@ -281,7 +289,7 @@ class ChattyAgent:
         return response_text
 
     def suggest_task(self):
-        """Provides a time-based task suggestion with prioritization."""
+        """Provides a predictive task suggestion with prioritization."""
         current_time = datetime.now()
         suggestions = []
         for timestamp, task_data in self.scheduled_tasks.items():
@@ -294,6 +302,15 @@ class ChattyAgent:
         if suggestions:
             suggestions.sort(reverse=True)  # Sort by priority score (highest first)
             return suggestions[0][1]  # Return highest priority suggestion
+
+        # Predictive suggestion based on task history
+        if self.task_history:
+            most_frequent_task = max(self.task_history.items(), key=lambda x: x[1])[0]
+            next_hour = (current_time.hour + 1) % 24
+            suggested_time = current_time.replace(hour=next_hour, minute=0, second=0)
+            if suggested_time < current_time:
+                suggested_time += timedelta(days=1)
+            return f"Based on your habits, how about scheduling {most_frequent_task} at {suggested_time.strftime('%H:%M')}?"
         current_hour = current_time.hour
         if 12 <= current_hour < 14:
             return "Perhaps it's time to schedule lunch around 12:30?"
