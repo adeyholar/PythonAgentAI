@@ -2,38 +2,39 @@ import numpy as np
 import pygame
 import json
 from datetime import datetime
+import os
 
-class SimpleAgent:
+class ChattyAgent:
     def __init__(self):
         self.state = "idle"
-        self.memory = {}  # Simple in-memory storage
+        self.tasks = {}  # Task list with timestamps
+        self.personality = "cheerful"  # Can be "cheerful", "sarcastic", etc.
         pygame.init()
         self.screen = pygame.display.set_mode((400, 300))
-        pygame.display.set_caption("Simple Agent")
+        pygame.display.set_caption("Chatty Agent")
 
     def respond(self, command):
         command = command.lower().strip()
         if "hello" in command:
             self.state = "greeting"
-            response = "Hello! I’m your agent. How can I help?"
-        elif "remember" in command and ":" in command:
-            key, value = command.split(":", 1)
-            self.memory[key.strip()] = value.strip()
-            response = f"Remembered: {key} = {value}"
-        elif "recall" in command and any(k in command for k in self.memory):
-            for k in self.memory:
-                if k in command:
-                    response = f"Recalling: {k} = {self.memory[k]}"
-                    break
-            else:
-                response = "Nothing to recall for that key."
+            return f"Hey there! I’m your {self.personality} agent, ready to assist! What’s on your mind?"
+        elif "add task" in command and ":" in command:
+            task, desc = command.split(":", 1)
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            self.tasks[timestamp] = desc.strip()
+            return f"Yay! Added task: {desc} at {timestamp}!"
+        elif "list tasks" in command:
+            if self.tasks:
+                return "Your tasks:\n" + "\n".join(f"{t}: {d}" for t, d in self.tasks.items())
+            return "No tasks yet—give me something to do!"
+        elif "clear tasks" in command:
+            self.tasks.clear()
+            return "Tasks cleared! I’m all fresh now!"
         elif "exit" in command:
             self.state = "exiting"
-            response = "Goodbye!"
+            return "Catch you later! Saving my notes..."
         else:
-            response = "I don’t understand. Try 'hello', 'remember key:value', 'recall key', or 'exit'."
-        self.memory[datetime.now().strftime("%H:%M:%S")] = response
-        return response
+            return f"Hmm, I’m stumped! Try ‘hello’, ‘add task:desc’, ‘list tasks’, ‘clear tasks’, or ‘exit’."
 
     def visualize(self):
         self.screen.fill((0, 0, 0))  # Black background
@@ -55,10 +56,12 @@ class SimpleAgent:
                         print(response)
                         self.visualize()
             pygame.time.delay(100)
+        # Ensure data directory exists
+        os.makedirs("data", exist_ok=True)
+        with open("data/tasks.json", "w") as f:
+            json.dump(self.tasks, f, indent=4)
         pygame.quit()
-        with open("data/memory.json", "w") as f:
-            json.dump(self.memory, f, indent=4)
 
 if __name__ == "__main__":
-    agent = SimpleAgent()
+    agent = ChattyAgent()
     agent.run()
