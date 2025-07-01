@@ -1,7 +1,5 @@
 {
     "tasks": {},
     "scheduled_tasks": {},
-    "completed_tasks": {
-        "11:45:00": "check lunch"
-    }
+    "completed_tasks": {}
 }

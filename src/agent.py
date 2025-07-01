@@ -4,6 +4,7 @@ import json
 from datetime import datetime, timedelta
 import os
 import time
+import random
 
 class ChattyAgent:
     def __init__(self):
@@ -23,7 +24,8 @@ class ChattyAgent:
         command = command.lower().strip()
         if "hello" in command:
             self.state = "greeting"
-            return f"Hey there! I’m your {self.personality} agent, ready to assist! What’s on your mind?"
+            suggestion = self.suggest_task()
+            return f"Hey there! I’m your {self.personality} agent, ready to assist! {suggestion}"
         elif "add task" in command and ":" in command:
             _, desc = command.split(":", 1)
             timestamp = datetime.now().strftime("%H:%M:%S")
@@ -103,6 +105,14 @@ class ChattyAgent:
             return "Catch you later! Saving my notes..."
         else:
             return f"Oops! I’m puzzled. Try ‘hello’, ‘add task:desc’, ‘schedule task:desc at HH:MM’, ‘schedule recurring:desc at HH:MM’, ‘complete task:HH:MM:SS’, ‘review completed’, ‘list tasks’, ‘clear tasks’, or ‘exit’."
+
+    def suggest_task(self):
+        current_hour = datetime.now().hour
+        if 12 <= current_hour < 14:
+            return "How about scheduling lunch around 12:30?"
+        elif 17 <= current_hour < 19:
+            return "Maybe schedule dinner prep for 17:30?"
+        return "No suggestions right now—add your own task!"
 
     def visualize(self):
         self.screen.fill((0, 0, 0))
