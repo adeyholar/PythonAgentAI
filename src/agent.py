@@ -27,7 +27,7 @@ class ChattyAgent:
         # --- Agent State & Data ---
         self.state = "idle"  # Current visual/functional state
         self.tasks = {}  # General tasks (timestamp: desc)
-        self.scheduled_tasks = {}  # Scheduled tasks (timestamp: {"desc": ..., "recurring": ...})
+        self.scheduled_tasks = {}  # Scheduled tasks (timestamp: {"desc": ..., "recurring": ..., "priority": ...})
         self.completed_tasks = {}  # Completed tasks (timestamp: desc)
         self.personality = "cheerful"
         self.input_buffer = ""
@@ -114,29 +114,42 @@ class ChattyAgent:
             parts = command.split(":", 1)
             action_part = parts[0].strip()
             remaining = parts[1].strip()
-            # Extract description as everything before the first time keyword
-            time_keywords = ["at", "for", "in"]
-            desc = remaining
-            time_str = ""
-            for keyword in time_keywords:
-                if keyword in remaining:
-                    desc_parts = remaining.split(keyword)
-                    desc = desc_parts[0].strip()
-                    time_str = next((s.strip() for s in desc_parts[1:] if s.strip()), "")
-                    break
+            # Extract description and optional priority
+            desc_with_priority = remaining.split(" at ")[0].strip() if " at " in remaining else remaining.split(" for ")[0].strip() if " for " in remaining else remaining.split(" in ")[0].strip()
+            priority = 1  # Default priority
+            if "(" in desc_with_priority and ")" in desc_with_priority:
+                desc_part, prio_part = desc_with_priority.rsplit("(", 1)
+                desc = desc_part.strip()
+                if "priority" in prio_part.lower() and ")" in prio_part:
+                    prio_value = prio_part.split("priority:")[1].split(")")[0].strip()
+                    try:
+                        priority = max(1, min(5, int(prio_value)))  # Clamp priority between 1 and 5
+                    except ValueError:
+                        priority = 1  # Default if parsing fails
+            else:
+                desc = desc_with_priority
 
             if not desc:
                 return {"action": "unknown", "message": f"Please provide a task description after '{action_part}:' (e.g., 'schedule task:check desk at 1:15')!"}
-            if not time_str:
+
+            time_match = None
+            time_keywords = ["at", "for", "in"]
+            for keyword in time_keywords:
+                if keyword in remaining:
+                    time_str = next((s.strip() for s in remaining.split(keyword)[1:] if s.strip()), "")
+                    if time_str:
+                        try:
+                            parsed_time = parse(time_str, fuzzy=True)
+                            time_match = parsed_time.strftime("%H:%M")
+                            break
+                        except ParserError:
+                            continue
+
+            if not time_match:
                 return {"action": "unknown", "message": f"Please specify a time after '{desc}' using 'at', 'for', or 'in' with a format like '1:15 PM' or '13:15'!"}
 
-            try:
-                parsed_time = parse(time_str, fuzzy=True)
-                time_match = parsed_time.strftime("%H:%M")
-                recurring = "recurring" in command
-                return {"action": "schedule", "desc": desc, "time": time_match, "recurring": recurring}
-            except ParserError:
-                return {"action": "unknown", "message": f"Couldn’t understand the time '{time_str}'. Please use formats like '1:15 PM', '13:00', or 'noon'."}
+            recurring = "recurring" in command
+            return {"action": "schedule", "desc": desc, "time": time_match, "recurring": recurring, "priority": priority}
 
         elif "complete task" in command and ":" in command:
             _, task_identifier = command.split(":", 1)
@@ -181,8 +194,12 @@ class ChattyAgent:
                 if scheduled_datetime < datetime.now():
                     scheduled_datetime += timedelta(days=1)
                 timestamp_key = scheduled_datetime.strftime("%Y-%m-%d %H:%M:%S")
-                self.scheduled_tasks[timestamp_key] = {"desc": nlu_result["desc"], "recurring": nlu_result["recurring"]}
-                response_text = f"Woo-hoo! Scheduled '{nlu_result['desc']}' for {scheduled_datetime.strftime('%Y-%m-%d %H:%M')}!"
+                self.scheduled_tasks[timestamp_key] = {
+                    "desc": nlu_result["desc"],
+                    "recurring": nlu_result["recurring"],
+                    "priority": nlu_result["priority"]
+                }
+                response_text = f"Woo-hoo! Scheduled '{nlu_result['desc']}' (Priority: {nlu_result['priority']}) for {scheduled_datetime.strftime('%Y-%m-%d %H:%M')}!"
             except ValueError:
                 response_text = "Oops! Couldn’t process the scheduled time. Internal time format issue."
 
@@ -216,9 +233,10 @@ class ChattyAgent:
 
         elif nlu_result["action"] == "list":
             all_active_tasks = {**self.tasks, **{k: v["desc"] for k, v in self.scheduled_tasks.items()}}
-            active_list = [f"- {t}: {d}" for t, d in sorted(all_active_tasks.items())] if all_active_tasks else []
+            active_list = [f"- {t}: {v['desc']} (Priority: {v.get('priority', 1)})" for t, v in self.scheduled_tasks.items()] + \
+                          [f"- {t}: {d}" for t, d in self.tasks.items()] if all_active_tasks else []
             completed_list = [f"- {t}: {d}" for t, d in sorted(self.completed_tasks.items())] if self.completed_tasks else []
-            response_text = "Your tasks:\n" + "\n".join(active_list) if active_list else ""
+            response_text = "Your tasks:\n" + "\n".join(sorted(active_list)) if active_list else ""
             if completed_list:
                 response_text += "\nCompleted tasks:\n" + "\n".join(completed_list)
             if not active_list and not completed_list:
@@ -248,10 +266,11 @@ class ChattyAgent:
             scheduled_dt = datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S")
             time_diff = (scheduled_dt - current_time).total_seconds() / 60  # Difference in minutes
             if 0 < time_diff <= 120:  # Within the next 2 hours
-                priority = max(1, 120 - time_diff)  # Higher priority for closer tasks
-                suggestions.append((priority, f"Schedule {task_data['desc']} at {scheduled_dt.strftime('%H:%M')} (in {int(time_diff)} minutes)"))
+                urgency = max(1, 120 - time_diff)  # Higher urgency for closer tasks
+                priority_score = urgency * task_data["priority"]  # Combine urgency and priority
+                suggestions.append((priority_score, f"Schedule {task_data['desc']} at {scheduled_dt.strftime('%H:%M')} (in {int(time_diff)} minutes, Priority: {task_data['priority']})"))
         if suggestions:
-            suggestions.sort(reverse=True)  # Sort by priority (highest first)
+            suggestions.sort(reverse=True)  # Sort by priority score (highest first)
             return suggestions[0][1]  # Return highest priority suggestion
         current_hour = current_time.hour
         if 12 <= current_hour < 14:
@@ -309,34 +328,37 @@ class ChattyAgent:
 
             current_minute = current_datetime.strftime("%Y-%m-%d %H:%M")
             if current_datetime >= scheduled_dt and current_minute not in self.last_notified.get(timestamp_key, []):
-                alert_message = f"⏰ Alert! Time to {task_data['desc']} at {scheduled_dt.strftime('%Y-%m-%d %H:%M')}"
-                self._add_response_to_display(alert_message)
-                print(alert_message)
+                try:
+                    alert_message = f"⏰ Alert! Time to {task_data['desc']} at {scheduled_dt.strftime('%Y-%m-%d %H:%M')}"
+                    self._add_response_to_display(alert_message)
+                    print(alert_message)
 
-                self.state = "alert"
-                self.visualize()
+                    self.state = "alert"
+                    self.visualize()
 
-                if self.alert_sound:
-                    self.alert_sound.play()
-                elif self.beep_sound:
-                    self.beep_sound.play()
-                else:
-                    print("No sound available—check sound files.")
+                    if self.alert_sound:
+                        self.alert_sound.play()
+                    elif self.beep_sound:
+                        self.beep_sound.play()
+                    else:
+                        print("No sound available—check sound files.")
 
-                self.last_notified[timestamp_key] = current_minute
+                    self.last_notified[timestamp_key] = current_minute
 
-                if task_data["recurring"]:
-                    new_scheduled_dt = scheduled_dt + timedelta(days=1)
-                    new_timestamp_key = new_scheduled_dt.strftime("%Y-%m-%d %H:%M:%S")
-                    self.scheduled_tasks[new_timestamp_key] = task_data
-                    print(f"Rescheduled recurring task '{task_data['desc']}' for {new_scheduled_dt.strftime('%Y-%m-%d %H:%M')}.")
-                else:
-                    self.scheduled_tasks.pop(timestamp_key)
-                    print(f"One-time task '{task_data['desc']}' completed and removed.")
-
-                time.sleep(0.5)
-                self.state = "idle"
-                self.visualize()
+                    if task_data["recurring"]:
+                        new_scheduled_dt = scheduled_dt + timedelta(days=1)
+                        new_timestamp_key = new_scheduled_dt.strftime("%Y-%m-%d %H:%M:%S")
+                        self.scheduled_tasks[new_timestamp_key] = task_data
+                        print(f"Rescheduled recurring task '{task_data['desc']}' for {new_scheduled_dt.strftime('%Y-%m-%d %H:%M')}.")
+                    else:
+                        self.scheduled_tasks.pop(timestamp_key)
+                        print(f"One-time task '{task_data['desc']}' completed and removed.")
+                except Exception as e:
+                    print(f"Error during alert processing for {timestamp_key} on line ~225: {e}")
+                finally:
+                    time.sleep(0.5)
+                    self.state = "idle"
+                    self.visualize()
 
     def run(self):
         """Main loop for the Chatty Agent."""

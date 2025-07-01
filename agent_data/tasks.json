@@ -1,10 +1,5 @@
 {
     "tasks": {},
-    "scheduled_tasks": {
-        "2025-07-01 14:17:00": {
-            "desc": "check lunch",
-            "recurring": true
-        }
-    },
+    "scheduled_tasks": {},
     "completed_tasks": {}
 }
