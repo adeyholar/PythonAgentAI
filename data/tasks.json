@@ -1,4 +1,9 @@
 {
     "tasks": {},
-    "scheduled_tasks": {}
+    "scheduled_tasks": {
+        "10:45:00": {
+            "desc": "check lunch",
+            "recurring": true
+        }
+    }
 }
