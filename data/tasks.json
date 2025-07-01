@@ -1,5 +1,6 @@
 {
-    "tasks": {},
-    "scheduled_tasks": {},
-    "completed_tasks": {}
+  "tasks": {},
+  "scheduled_tasks": {},
+  "completed_tasks": {},
+  "task_counter": 0
 }
