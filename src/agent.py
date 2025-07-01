@@ -37,6 +37,8 @@ class ChattyAgent:
             if ":" in command:
                 parts = command.split(":", 1)
                 desc = parts[0].replace("add task", "").replace("schedule task", "").replace("schedule recurring", "").strip()
+                if not desc:
+                    return {"action": "unknown", "message": "Please provide a task description!"}
                 time_match = None
                 for t in ["at", "for", "in"]:
                     if t in command:
@@ -123,8 +125,8 @@ class ChattyAgent:
         elif nlu_result["action"] == "exit":
             self.state = "exiting"
             return "Catch you later! Saving my notes..."
-        else:
-            return f"Oops! I’m puzzled. Try natural commands like ‘hello’, ‘add task:desc’, ‘schedule task:desc at HH:MM’, ‘schedule recurring:desc at HH:MM’, ‘complete task:HH:MM:SS’, ‘review completed’, ‘list tasks’, ‘clear tasks’, or ‘exit’."
+        elif nlu_result["action"] == "unknown":
+            return nlu_result.get("message", f"Oops! I’m puzzled. Try natural commands like ‘hello’, ‘add task:desc’, ‘schedule task:desc at HH:MM’, ‘schedule recurring:desc at HH:MM’, ‘complete task:HH:MM:SS’, ‘review completed’, ‘list tasks’, ‘clear tasks’, or ‘exit’.")
 
     def suggest_task(self):
         current_hour = datetime.now().hour
