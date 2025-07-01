@@ -1,13 +1,14 @@
 import numpy as np
 import pygame
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 
 class ChattyAgent:
     def __init__(self):
         self.state = "idle"
         self.tasks = {}
+        self.scheduled_tasks = {}
         self.personality = "cheerful"
         self.input_buffer = ""
         pygame.init()
@@ -21,22 +22,42 @@ class ChattyAgent:
             self.state = "greeting"
             return f"Hey there! I’m your {self.personality} agent, ready to assist! What’s on your mind?"
         elif "add task" in command and ":" in command:
-            task, desc = command.split(":", 1)
+            _, desc = command.split(":", 1)
             timestamp = datetime.now().strftime("%H:%M:%S")
             self.tasks[timestamp] = desc.strip()
             return f"Yay! Added task: {desc} at {timestamp}!"
+        elif "schedule task" in command and ":" in command:
+            parts = command.split(":", 1)[1].split(" at ")
+            if len(parts) == 2:
+                desc, time_str = parts
+                try:
+                    schedule_time = datetime.strptime(time_str.strip(), "%H:%M")
+                    schedule_time = schedule_time.replace(
+                        year=datetime.now().year,
+                        month=datetime.now().month,
+                        day=datetime.now().day
+                    )
+                    if schedule_time < datetime.now():
+                        schedule_time += timedelta(days=1)
+                    timestamp = schedule_time.strftime("%H:%M:%S")
+                    self.scheduled_tasks[timestamp] = desc.strip()
+                    return f"Woo-hoo! Scheduled {desc} for {timestamp}!"
+                except ValueError:
+                    return "Oops! Use format 'schedule task:desc at HH:MM' (e.g., 14:00)."
         elif "list tasks" in command:
-            if self.tasks:
-                return "Your tasks:\n" + "\n".join(f"{t}: {d}" for t, d in self.tasks.items())
+            all_tasks = {**self.tasks, **self.scheduled_tasks}
+            if all_tasks:
+                return "Your tasks:\n" + "\n".join(f"{t}: {d}" for t, d in all_tasks.items())
             return "No tasks yet—give me something to do!"
         elif "clear tasks" in command:
             self.tasks.clear()
+            self.scheduled_tasks.clear()
             return "Tasks cleared! I’m all fresh now!"
         elif "exit" in command:
             self.state = "exiting"
             return "Catch you later! Saving my notes..."
         else:
-            return f"Hmm, I’m stumped! Try ‘hello’, ‘add task:desc’, ‘list tasks’, ‘clear tasks’, or ‘exit’."
+            return f"Oops! I’m puzzled. Try ‘hello’, ‘add task:desc’, ‘schedule task:desc at HH:MM’, ‘list tasks’, ‘clear tasks’, or ‘exit’."
 
     def visualize(self):
         self.screen.fill((0, 0, 0))
@@ -44,7 +65,6 @@ class ChattyAgent:
             pygame.draw.circle(self.screen, (0, 255, 0), (200, 150), 50)
         elif self.state == "exiting":
             pygame.draw.circle(self.screen, (255, 0, 0), (200, 150), 50)
-        # Display input buffer
         text_surface = self.font.render(self.input_buffer, True, (255, 255, 255))
         self.screen.blit(text_surface, (10, 10))
         pygame.display.flip()
@@ -60,7 +80,7 @@ class ChattyAgent:
                         response = self.respond(self.input_buffer)
                         print(response)
                         self.visualize()
-                        self.input_buffer = ""  # Clear after processing
+                        self.input_buffer = ""
                     elif event.key == pygame.K_BACKSPACE:
                         self.input_buffer = self.input_buffer[:-1]
                     elif event.unicode.isprintable():
@@ -69,7 +89,7 @@ class ChattyAgent:
             pygame.time.delay(100)
         os.makedirs("data", exist_ok=True)
         with open("data/tasks.json", "w") as f:
-            json.dump(self.tasks, f, indent=4)
+            json.dump({"tasks": self.tasks, "scheduled_tasks": self.scheduled_tasks}, f, indent=4)
         pygame.quit()
 
 if __name__ == "__main__":
