@@ -4,12 +4,12 @@ from email.mime.text import MIMEText
 from config import OLLAMA_API_URL, EMAIL_SERVER, EMAIL_PORT, EMAIL_FROM, EMAIL_TO
 
 class OllamaClient:
-    @staticmethod
-    def generate_blog():
+    # Made generate_blog accept a prompt for flexibility
+    def generate_blog(self, prompt="Write a 200-word blog post on a productivity topic."):
         try:
             payload = {
                 "model": "codellama:7b",
-                "prompt": "Write a 200-word blog post on a productivity topic.",
+                "prompt": prompt,
                 "stream": False
             }
             response = requests.post(OLLAMA_API_URL, json=payload, timeout=30)
@@ -19,8 +19,7 @@ class OllamaClient:
             return f"Error generating blog: {e}"
 
 class EmailClient:
-    @staticmethod
-    def send_email(subject, body):
+    def send_email(self, subject, body):
         try:
             msg = MIMEText(body)
             msg["Subject"] = subject

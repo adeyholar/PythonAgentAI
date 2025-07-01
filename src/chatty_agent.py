@@ -1,237 +1,232 @@
+# chatty_agent.py
 import pygame
 import time
 import threading
 from datetime import datetime, timedelta
+
+# Import all necessary components and constants
 from task_manager import TaskManager
 from nlu_parser import NLUParser
 from external_services import OllamaClient, EmailClient
 from ui_manager import UIManager
-from config import CHECK_INTERVAL, BLOG_INTERVAL
+from config import CHECK_INTERVAL, BLOG_INTERVAL, ALERT_SOUND_FILE, BEEP_SOUND_FILE, SCREEN_WIDTH, SCREEN_HEIGHT, TASKS_FILE # Import SCREEN_WIDTH, SCREEN_HEIGHT from config
 
 class ChattyAgent:
     def __init__(self):
+        pygame.init()  # Ensure Pygame is initialized first
+        pygame.mixer.init()  # Explicitly initialize mixer
+
         self.task_manager = TaskManager()
         self.nlu = NLUParser()
         self.ollama_client = OllamaClient()
         self.email_client = EmailClient()
-        self.ui = UIManager(15)
-        self.state = "idle"
+
+        # Initialize Pygame display here, and then pass the screen surface to UIManager
+        initial_screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.RESIZABLE)
+        pygame.display.set_caption("Chatty Agent")
+        
+        # UIManager now takes the screen directly in its constructor or via a dedicated setter
+        # Let's refactor UIManager to accept screen in __init__ or have a simple set_screen
+        self.ui = UIManager(initial_screen) # Pass initial_screen to UIManager constructor
+        
+        self.state = "idle" # Overall agent state (for visual feedback)
         self.personality = "cheerful"
-        self.alert_sound = self._load_sound("alert.wav")
-        self.beep_sound = self._load_sound("beep.wav")
-        self.last_check_time = time.time()
-        self.task_manager.load_state("agent_data/tasks.json")
+        self.last_check_time = time.time() # For periodic task checks
+
+        self.alert_sound = self._load_sound(ALERT_SOUND_FILE)
+        self.beep_sound = self._load_sound(BEEP_SOUND_FILE)
+        if not self.alert_sound or not self.beep_sound:
+            print("Warning: Sound files may not load correctly. Ensure 'alert.wav' and 'beep.wav' exist.")
+
+        # Load initial state for tasks
+        self.task_manager.load_state(TASKS_FILE)
+
+        # Start background blog generation thread
+        blog_thread = threading.Thread(target=self._schedule_blog_generation, daemon=True)
+        blog_thread.start()
+
+        # Initial visualization (draw empty screen + agent)
+        self.ui.visualize(self.state) # ui.visualize now takes only state
 
     def _load_sound(self, filename):
         try:
             return pygame.mixer.Sound(filename)
-        except pygame.error:
-            print(f"Warning: Could not load sound file '{filename}'.")
+        except pygame.error as e:
+            print(f"Warning: Could not load sound file '{filename}': {e}")
             return None
 
     def _schedule_blog_generation(self):
+        """Schedules blog generation and email at regular intervals."""
         while True:
+            # Calculate time to wait until the next interval
             now = datetime.now()
-            next_interval = now + timedelta(seconds=BLOG_INTERVAL)
-            wait_time = (next_interval - now).total_seconds()
-            time.sleep(wait_time)
-            blog_content = self.ollama_client.generate_blog()
+            next_interval_time = now + timedelta(seconds=BLOG_INTERVAL)
+            time_to_wait = (next_interval_time - now).total_seconds()
+            if time_to_wait < 0: # If somehow we are behind schedule, just wait for next full interval
+                time_to_wait = 0 # Or could be BLOG_INTERVAL - (abs(time_to_wait) % BLOG_INTERVAL)
+
+            time.sleep(max(0, time_to_wait)) # Ensure non-negative wait time
+
+            blog_content = self.ollama_client.generate_blog() # Use default prompt or pass a specific one
             subject = f"Blog Post - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
             self.email_client.send_email(subject, blog_content)
             self.ui.add_response(f"Blog generated and emailed at {datetime.now().strftime('%H:%M')}")
 
     def respond(self, command):
+        """Processes a user command and returns a response."""
         nlu_result = self.nlu.parse(command)
+        response_text = "..." # Default response, should be overwritten
 
-        response_text = "..."  # Default response
-
-        if nlu_result["action"] == "greet":
+        action = nlu_result["action"]
+        
+        if action == "greet":
             self.state = "greeting"
-            suggestion = self.suggest_task()
+            # TaskManager now handles suggestion logic
+            suggestion = self.task_manager.suggest_task() 
             response_text = f"Hey there! I’m your {self.personality} agent, ready to assist! {suggestion}"
-
-        elif nlu_result["action"] == "add":
+        
+        elif action == "add":
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            self.task_manager.add_task(nlu_result["desc"], timestamp)
-            response_text = f"Yay! Added task: {nlu_result['desc']} at {timestamp}!"
-
-        elif nlu_result["action"] == "schedule":
+            # TaskManager returns the full response string
+            response_text = self.task_manager.add_task(nlu_result["desc"], timestamp) 
+        
+        elif action == "schedule":
             try:
                 today = datetime.now().date()
                 scheduled_dt_candidate = datetime.strptime(nlu_result["time"], "%H:%M").time()
                 scheduled_datetime = datetime.combine(today, scheduled_dt_candidate)
+                # If scheduled time is in the past for today, schedule for next day
                 if scheduled_datetime < datetime.now():
                     scheduled_datetime += timedelta(days=1)
-                self.task_manager.schedule_task(nlu_result["desc"], scheduled_datetime, nlu_result["recurring"], nlu_result["priority"])
-                response_text = f"Woo-hoo! Scheduled '{nlu_result['desc']}' (Priority: {nlu_result['priority']}) for {scheduled_datetime.strftime('%Y-%m-%d %H:%M')}!"
+                # TaskManager returns the full response string
+                response_text = self.task_manager.schedule_task(
+                    nlu_result["desc"], scheduled_datetime, nlu_result["recurring"], nlu_result["priority"]
+                )
             except ValueError:
-                response_text = "Oops! Couldn’t process the scheduled time."
-
-        elif nlu_result["action"] == "set_priority":
+                response_text = "Oops! Couldn’t process the scheduled time. Please use a valid time format (e.g., '14:30' or '2:30 PM')."
+            
+        elif action == "set_priority":
+            # TaskManager returns description and timestamp, ChattyAgent formats response
             desc, timestamp = self.task_manager.set_priority(nlu_result["task_time"], nlu_result["priority"])
-            response_text = f"Updated priority for '{desc}' at {timestamp} to {nlu_result['priority']}" if desc else f"No scheduled task found with time '{nlu_result['task_time']}'."
+            response_text = f"Updated priority for '{desc}' at {timestamp} to {nlu_result['priority']}!" if desc else f"No scheduled task found matching '{nlu_result['task_time']}'."
+            
+        elif action == "feedback":
+            # Explicitly cast to int to help Pylance
+            self.task_manager.feedback_history[nlu_result["suggestion"].lower()] += int(nlu_result["feedback"]) # FIX: Explicit cast to int
+            feedback_value_str = "good" if nlu_result["feedback"] == 1 else "bad" if nlu_result["feedback"] == -1 else "neutral"
+            response_text = f"Feedback recorded for '{nlu_result['suggestion']}': {feedback_value_str}"
 
-        elif nlu_result["action"] == "feedback":
-            response_text = nlu_result.get("response_text", "Feedback processed.")  # Fallback if response_text is missing
-
-        elif nlu_result["action"] == "generate_blog":
+        elif action == "generate_blog":
             blog_content = self.ollama_client.generate_blog()
             subject = f"Blog Post - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
             self.email_client.send_email(subject, blog_content)
-            response_text = f"Generated and emailed blog post: {subject}\n{blog_content[:100]}..."
+            # Add detailed blog content to response display
+            self.ui.add_response(f"Generated and emailed blog post: {subject}\n{blog_content[:100]}...") 
+            # Provide a concise response for the input line
+            response_text = "Blog generated and emailed!" 
 
-        elif nlu_result["action"] == "complete":
+        elif action == "complete":
+            # TaskManager returns description and timestamp, ChattyAgent formats response
             desc, timestamp = self.task_manager.complete_task(nlu_result["identifier"])
-            response_text = f"Great job! Marked '{desc}' ({timestamp}) as complete!" if desc else f"Task '{nlu_result['identifier']}' not found."
+            response_text = f"Great job! Marked '{desc}' ({timestamp}) as complete!" if desc else f"Task '{nlu_result['identifier']}' not found in active or scheduled tasks."
+        
+        elif action == "review":
+            # TaskManager returns the formatted string
+            response_text = self.task_manager.get_completed_tasks_display()
+        
+        elif action == "list":
+            # TaskManager returns the formatted string
+            response_text = self.task_manager.get_all_tasks_display()
+        
+        elif action == "clear":
+            self.task_manager.clear_tasks() # TaskManager clears its data
+            response_text = "All tasks cleared! I’m all fresh now!" # ChattyAgent provides generic response
 
-        elif nlu_result["action"] == "review":
-            if self.task_manager.completed_tasks:
-                response_text = "Completed tasks:\n" + "\n".join(f"- {t}: {d}" for t, d in self.task_manager.completed_tasks.items())
-            else:
-                response_text = "No tasks completed yet!"
-
-        elif nlu_result["action"] == "list":
-            all_active_tasks = {**self.task_manager.tasks, **{k: v["desc"] for k, v in self.task_manager.scheduled_tasks.items()}}
-            active_list = [f"- {t}: {v['desc']} (Priority: {v.get('priority', 1)})" for t, v in self.task_manager.scheduled_tasks.items()] + \
-                          [f"- {t}: {d}" for t, d in self.task_manager.tasks.items()] if all_active_tasks else []
-            completed_list = [f"- {t}: {d}" for t, d in sorted(self.task_manager.completed_tasks.items())] if self.task_manager.completed_tasks else []
-            response_text = "Your tasks:\n" + "\n".join(sorted(active_list)) if active_list else ""
-            if completed_list:
-                response_text += "\nCompleted tasks:\n" + "\n".join(completed_list)
-            if not active_list and not completed_list:
-                response_text = "No tasks yet—give me something to do!"
-
-        elif nlu_result["action"] == "clear":
-            self.task_manager.clear_tasks()
-            response_text = "All tasks cleared! I’m all fresh now!"
-
-        elif nlu_result["action"] == "exit":
+        elif action == "exit":
             self.state = "exiting"
             response_text = "Catch you later! Saving my notes..."
+        
+        elif action == "unknown":
+            response_text = nlu_result.get("message", "Oops! I’m puzzled. Try natural commands like ‘hello’, ‘add task:desc’, ‘schedule task:desc at HH:MM’, ‘schedule recurring:desc at HH:MM’, ‘set priority:TIME to PRIORITY’, ‘feedback:SUGGESTION on LIKE/DISLIKE’, ‘generate blog’, ‘complete task:TIME_OR_DESC’, ‘review completed’, ‘list tasks’, ‘clear tasks’, or ‘exit’.")
 
-        elif nlu_result["action"] == "unknown":
-            response_text = nlu_result.get("message", f"Oops! I’m puzzled. Try natural commands like ‘hello’, ‘add task:desc’, ‘schedule task:desc at HH:MM’, ‘schedule recurring:desc at HH:MM’, ‘set priority:TIME to PRIORITY’, ‘feedback:SUGGESTION on LIKE/DISLIKE’, ‘generate blog’, ‘complete task:TIME_OR_DESC’, ‘review completed’, ‘list tasks’, ‘clear tasks’, or ‘exit’.")
-
-        self.ui.add_response(response_text)
+        self.ui.add_response(response_text) # Add agent's response to UI display
         return response_text
 
-    def suggest_task(self):
-        current_time = datetime.now()
-        suggestions = []
-        for timestamp, task_data in self.task_manager.scheduled_tasks.items():
-            scheduled_dt = datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S")
-            time_diff = (scheduled_dt - current_time).total_seconds() / 60
-            if 0 < time_diff <= 120:
-                urgency = max(1, 120 - time_diff)
-                priority_score = urgency * task_data["priority"]
-                suggestions.append((priority_score, f"Schedule {task_data['desc']} at {scheduled_dt.strftime('%H:%M')} (in {int(time_diff)} minutes, Priority: {task_data['priority']})"))
-        if suggestions:
-            suggestions.sort(reverse=True)
-            return suggestions[0][1]
+    def check_scheduled_tasks_and_notify_ui(self):
+        """
+        Delegates task checking to TaskManager and handles UI alerts/sounds based on results.
+        """
+        alerts = self.task_manager.check_and_update_scheduled_tasks() # TaskManager returns list of alert messages
+        if alerts:
+            self.state = "alert" # Set agent state to alert for visual feedback
+            for alert_message in alerts:
+                self.ui.add_response(alert_message) # Add each alert message to UI display
+                print(alert_message) # Also print to console for debugging
+            
+            # Play sound based on availability
+            if self.alert_sound:
+                self.alert_sound.play()
+            elif self.beep_sound:
+                self.beep_sound.play()
+            else:
+                print("No sound available—check sound files.") # Fallback message
 
-        if self.task_manager.task_history:
-            adjusted_history = {}
-            for task, frequency in self.task_manager.task_history.items():
-                feedback = self.task_manager.feedback_history.get(task.lower(), 0)
-                adjusted_score = frequency * (1 + feedback)
-                adjusted_history[task] = adjusted_score
-            if adjusted_history:
-                most_frequent_task = max(adjusted_history.items(), key=lambda x: x[1])[0]
-                next_hour = (current_time.hour + 1) % 24
-                suggested_time = current_time.replace(hour=next_hour, minute=0, second=0)
-                if suggested_time < current_time:
-                    suggested_time += timedelta(days=1)
-                return f"Based on your habits, how about scheduling {most_frequent_task} at {suggested_time.strftime('%H:%M')}? (Provide feedback with 'feedback:{most_frequent_task} on like/good' or 'dislike/bad')"
-        current_hour = current_time.hour
-        if 12 <= current_hour < 14:
-            return "Perhaps it's time to schedule lunch around 12:30?"
-        elif 17 <= current_hour < 19:
-            return "Maybe schedule dinner prep for 17:30?"
-        elif 21 <= current_hour < 23:
-            return "Don't forget to schedule your bedtime routine around 22:00?"
-        return "No specific suggestions right now—add your own task!"
-
-    def check_scheduled_tasks(self):
-        current_datetime = datetime.now()
-        for timestamp_key in list(self.task_manager.scheduled_tasks.keys()):
-            task_data = self.task_manager.scheduled_tasks.get(timestamp_key)
-            if not task_data:
-                continue
-            try:
-                scheduled_dt = datetime.strptime(timestamp_key, "%Y-%m-%d %H:%M:%S")
-            except ValueError:
-                print(f"Warning: Invalid timestamp format for '{timestamp_key}'. Removing task.")
-                del self.task_manager.scheduled_tasks[timestamp_key]
-                continue
-            current_day = current_datetime.strftime("%Y-%m-%d")
-            last_notified_day = self.task_manager.last_notified.get(timestamp_key, {}).get("day", "")
-            if (current_datetime >= scheduled_dt and 
-                current_day not in self.task_manager.last_notified.get(timestamp_key, {}).get("days", [])):
-                try:
-                    alert_message = f"⏰ Alert! Time to {task_data['desc']} at {scheduled_dt.strftime('%Y-%m-%d %H:%M')}"
-                    self.ui.add_response(alert_message)
-                    print(alert_message)
-                    self.state = "alert"
-                    self.ui.visualize(self.state, self.input_buffer)
-                    if self.alert_sound:
-                        self.alert_sound.play()
-                    elif self.beep_sound:
-                        self.beep_sound.play()
-                    else:
-                        print("No sound available—check sound files.")
-                    if timestamp_key not in self.task_manager.last_notified:
-                        self.task_manager.last_notified[timestamp_key] = {"days": []}
-                    self.task_manager.last_notified[timestamp_key]["days"].append(current_day)
-                    if task_data["recurring"]:
-                        new_scheduled_dt = scheduled_dt + timedelta(days=1)
-                        new_timestamp_key = new_scheduled_dt.strftime("%Y-%m-%d %H:%M:%S")
-                        self.task_manager.scheduled_tasks[new_timestamp_key] = task_data
-                        print(f"Rescheduled recurring task '{task_data['desc']}' for {new_scheduled_dt.strftime('%Y-%m-%d %H:%M')}.")
-                    else:
-                        del self.task_manager.scheduled_tasks[timestamp_key]
-                        print(f"One-time task '{task_data['desc']}' completed and removed.")
-                except Exception as e:
-                    print(f"Error during alert processing for {timestamp_key} on line ~225: {e}")
-                finally:
-                    time.sleep(0.5)
-                    self.state = "idle"
-                    self.ui.visualize(self.state, self.input_buffer)
+            # Briefly show alert state, then revert to idle
+            self.ui.visualize(self.state) # Update UI to show alert state
+            time.sleep(0.5) # Short delay
+            self.state = "idle" # Revert agent state
+            self.ui.visualize(self.state) # Update UI to show idle state
 
     def run(self):
-        import threading
-        blog_thread = threading.Thread(target=self._schedule_blog_generation, daemon=True)
-        blog_thread.start()
         running = True
-        last_check_time = time.time()
+        
         while running:
+            # Periodic check for scheduled tasks
             current_loop_time = time.time()
-            if current_loop_time - last_check_time >= CHECK_INTERVAL:
-                self.check_scheduled_tasks()
-                last_check_time = current_loop_time
+            if current_loop_time - self.last_check_time >= CHECK_INTERVAL:
+                self.check_scheduled_tasks_and_notify_ui() # Call the unified method
+                self.last_check_time = current_loop_time
+
+            # Event handling (Pygame events)
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     running = False
                 elif event.type == pygame.VIDEORESIZE:
-                    self.ui.screen = pygame.display.set_mode((event.w, event.h), pygame.RESIZABLE)
-                    self.ui.visualize(self.state, self.input_buffer)
+                    # When window is resized, update the Pygame display mode
+                    # And pass the new screen surface to the UIManager
+                    current_screen = pygame.display.set_mode((event.w, event.h), pygame.RESIZABLE)
+                    self.ui.set_screen(current_screen) # FIX: Use UIManager's set_screen method
+                    self.ui.visualize(self.state) # Re-render with new dimensions
                 elif event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_RETURN:
-                        if self.input_buffer:
-                            print(f"Processing input: '{self.input_buffer}'")
-                            response = self.respond(self.input_buffer)
+                        current_input = self.ui.get_input_buffer() # Get input from UI manager
+                        if current_input:
+                            print(f"Processing input: '{current_input}'")
+                            response = self.respond(current_input) # Process command
                             print(f"Agent says: {response}")
-                            self.input_buffer = ""
-                        self.ui.visualize(self.state, self.input_buffer)
+                            self.ui.clear_input_buffer() # Clear input buffer via UI manager
+                        self.ui.visualize(self.state) # Visualize after input processing
                     elif event.key == pygame.K_BACKSPACE:
-                        self.input_buffer = self.input_buffer[:-1]
+                        self.ui.remove_from_input_buffer() # Remove char via UI manager
+                        self.ui.visualize(self.state)
                     elif event.key == pygame.K_e:
-                        self.ui.expanded = not self.ui.expanded
-                        self.ui.visualize(self.state, self.input_buffer)
+                        self.ui.toggle_expanded() # Toggle expanded flag in UI manager
+                        # Based on the expanded state, adjust window size
+                        width, height = (1200, 900) if self.ui.expanded else (SCREEN_WIDTH, SCREEN_HEIGHT)
+                        
+                        # Re-create screen and update UIManager
+                        current_screen = pygame.display.set_mode((width, height), pygame.RESIZABLE)
+                        self.ui.set_screen(current_screen) # Update UIManager's screen
+                        
+                        self.ui.visualize(self.state) # Re-visualize after resize/expand
                     elif event.unicode.isprintable():
-                        self.input_buffer += event.unicode
-                    self.ui.visualize(self.state, self.input_buffer)
-            pygame.time.delay(50)
-        self.task_manager.save_state("agent_data/tasks.json")
+                        self.ui.add_to_input_buffer(event.unicode) # Add char via UI manager
+                        self.ui.visualize(self.state)
+
+            pygame.time.delay(50) # Small delay to prevent 100% CPU usage
+            self.ui.visualize(self.state) # Always visualize at the end of the loop iteration
+
+        self.task_manager.save_state(TASKS_FILE) # Save all task data before exiting
         pygame.quit()
 
 if __name__ == "__main__":
