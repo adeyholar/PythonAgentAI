@@ -30,29 +30,31 @@ class ChattyAgent:
             print("Warning: Could not load sound files. Notifications will be silent.")
 
     def parse_nlu(self, command):
+        print(f"Parsing command: '{command}'")  # Debugging output
         command = command.lower().strip()
         if "hello" in command:
             return {"action": "greet"}
         elif any(kw in command for kw in ["add task", "schedule task", "schedule recurring"]):
             if ":" not in command:
-                return {"action": "unknown", "message": "Please include a colon (e.g., 'schedule task:desc at HH:MM')!"}
+                return {"action": "unknown", "message": "Please use a colon (e.g., 'schedule task:desc at 1:15')!"}
             parts = command.split(":", 1)
-            desc = parts[0].replace("add task", "").replace("schedule task", "").replace("schedule recurring", "").strip()
-            if not desc:
-                return {"action": "unknown", "message": "Please provide a task description before the colon (e.g., 'schedule task:check desk at 1:00')!"}
+            desc_part = parts[0].replace("add task", "").replace("schedule task", "").replace("schedule recurring", "").strip()
+            if not desc_part:
+                return {"action": "unknown", "message": "Please provide a task description before the colon (e.g., 'schedule task:check desk at 1:15')!"}
             time_match = None
             for t in ["at", "for", "in"]:
                 if t in command:
-                    time_str = command.split(t)[1].strip()
-                    try:
-                        time_match = parse(time_str, fuzzy=True).strftime("%H:%M")
-                        break
-                    except ValueError:
-                        continue
+                    time_str = next((s for s in command.split(t) if s.strip()), "").strip()
+                    if time_str:
+                        try:
+                            time_match = parse(time_str, fuzzy=True).strftime("%H:%M")
+                            break
+                        except ValueError:
+                            continue
             if time_match:
                 recurring = "recurring" in command
-                return {"action": "schedule", "desc": desc, "time": time_match, "recurring": recurring}
-            return {"action": "add", "desc": desc}
+                return {"action": "schedule", "desc": desc_part, "time": time_match, "recurring": recurring}
+            return {"action": "add", "desc": desc_part}
         elif "complete task" in command and ":" in command:
             _, task_time = command.split(":", 1)
             return {"action": "complete", "time": task_time.strip()}
@@ -68,6 +70,7 @@ class ChattyAgent:
 
     def respond(self, command):
         nlu_result = self.parse_nlu(command)
+        print(f"Responding to: {nlu_result}")  # Debugging output
         if nlu_result["action"] == "greet":
             self.state = "greeting"
             suggestion = self.suggest_task()
@@ -90,7 +93,7 @@ class ChattyAgent:
                 self.scheduled_tasks[timestamp] = {"desc": nlu_result["desc"], "recurring": nlu_result["recurring"]}
                 return f"Woo-hoo! Scheduled {nlu_result['desc']} for {timestamp}!"
             except ValueError:
-                return "Oops! Couldn’t parse time. Use ‘at HH:MM’ or similar."
+                return "Oops! Couldn’t parse time. Use ‘at HH:MM’, ‘at 1:15 PM’, or similar."
         elif nlu_result["action"] == "complete":
             task_time = nlu_result["time"]
             all_tasks = {**self.tasks, **{k: v["desc"] for k, v in self.scheduled_tasks.items()}}
@@ -107,7 +110,7 @@ class ChattyAgent:
                         return f"Great job! Marked {t}: {desc} as complete!"
             elif task_time in self.completed_tasks:
                 return f"Already completed {task_time}: {self.completed_tasks[task_time]}!"
-            return "Task not found! Use a time like '11:15:00'."
+            return "Task not found! Use a time like '13:15:00'."
         elif nlu_result["action"] == "review":
             if self.completed_tasks:
                 return "Completed tasks:\n" + "\n".join(f"{t}: {d}" for t, d in self.completed_tasks.items())
@@ -190,6 +193,7 @@ class ChattyAgent:
                     running = False
                 elif event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_RETURN and self.input_buffer:
+                        print(f"Processing input: '{self.input_buffer}'")  # Debugging
                         response = self.respond(self.input_buffer)
                         print(response)
                         self.visualize()
