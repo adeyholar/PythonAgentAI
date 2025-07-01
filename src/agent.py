@@ -19,6 +19,7 @@ class ChattyAgent:
         pygame.display.set_caption("Chatty Agent")
         self.font = pygame.font.Font(None, 36)
         self.last_notified = {}  # Track last notification time per task
+        pygame.mixer.init()  # Initialize mixer for sound
 
     def respond(self, command):
         command = command.lower().strip()
@@ -136,6 +137,10 @@ class ChattyAgent:
                 task_data = self.scheduled_tasks.get(timestamp)
                 if task_data:
                     print(f"⏰ Alert! Time to {task_data['desc']} at {timestamp}!")
+                    pygame.mixer.music.load("alert.wav")  # Requires an alert.wav file
+                    pygame.mixer.music.play()
+                    while pygame.mixer.music.get_busy():
+                        pygame.time.wait(100)
                     self.state = "greeting"
                     self.visualize()
                     time.sleep(1)
