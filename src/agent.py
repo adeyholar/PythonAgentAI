@@ -16,6 +16,7 @@ class ChattyAgent:
         self.screen = pygame.display.set_mode((400, 300))
         pygame.display.set_caption("Chatty Agent")
         self.font = pygame.font.Font(None, 36)
+        self.last_notified = {}  # Track last notification time per task
 
     def respond(self, command):
         command = command.lower().strip()
@@ -90,10 +91,11 @@ class ChattyAgent:
 
     def check_scheduled_tasks(self):
         current_time = datetime.now().strftime("%H:%M:%S")
+        current_minute = datetime.now().strftime("%H:%M")
         for timestamp in list(self.scheduled_tasks.keys()):
             scheduled_dt = datetime.strptime(timestamp, "%H:%M:%S")
             current_dt = datetime.strptime(current_time, "%H:%M:%S")
-            if scheduled_dt <= current_dt and timestamp in self.scheduled_tasks:
+            if scheduled_dt <= current_dt and current_minute not in self.last_notified.get(timestamp, []):
                 task_data = self.scheduled_tasks.pop(timestamp)
                 print(f"⏰ Alert! Time to {task_data['desc']} at {timestamp}!")
                 self.state = "greeting"
@@ -109,6 +111,7 @@ class ChattyAgent:
                     )
                     new_timestamp = schedule_time.strftime("%H:%M:%S")
                     self.scheduled_tasks[new_timestamp] = task_data
+                self.last_notified.setdefault(timestamp, []).append(current_minute)
 
     def run(self):
         running = True
