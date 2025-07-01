@@ -3,6 +3,7 @@ import pygame
 import json
 from datetime import datetime, timedelta
 import os
+import time
 
 class ChattyAgent:
     def __init__(self):
@@ -69,9 +70,19 @@ class ChattyAgent:
         self.screen.blit(text_surface, (10, 10))
         pygame.display.flip()
 
+    def check_scheduled_tasks(self):
+        current_time = datetime.now().strftime("%H:%M:%S")
+        for timestamp in list(self.scheduled_tasks.keys()):
+            if timestamp <= current_time:
+                task = self.scheduled_tasks.pop(timestamp)
+                print(f"⏰ Alert! Time to {task} at {timestamp}!")
+                self.visualize()  # Flash the screen to notify
+                time.sleep(1)  # Brief pause
+
     def run(self):
         running = True
         while running:
+            self.check_scheduled_tasks()
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     running = False
@@ -86,7 +97,7 @@ class ChattyAgent:
                     elif event.unicode.isprintable():
                         self.input_buffer += event.unicode
                     self.visualize()
-            pygame.time.delay(100)
+            pygame.time.delay(1000)  # Increase delay to reduce CPU load
         os.makedirs("data", exist_ok=True)
         with open("data/tasks.json", "w") as f:
             json.dump({"tasks": self.tasks, "scheduled_tasks": self.scheduled_tasks}, f, indent=4)
