@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 import os
 import time
 import random
+from dateutil.parser import parse  # For flexible time parsing
 
 class ChattyAgent:
     def __init__(self):
@@ -19,58 +20,76 @@ class ChattyAgent:
         pygame.display.set_caption("Chatty Agent")
         self.font = pygame.font.Font(None, 36)
         self.last_notified = {}  # Track last notification time per task
-        pygame.mixer.init()  # Initialize mixer for sound
+        pygame.mixer.init()
+        self.alert_sound = None
+        self.beep_sound = None
+        try:
+            self.alert_sound = pygame.mixer.Sound("alert.wav")
+            self.beep_sound = pygame.mixer.Sound("beep.wav")
+        except pygame.error:
+            print("Warning: Could not load sound files. Notifications will be silent.")
 
-    def respond(self, command):
+    def parse_nlu(self, command):
         command = command.lower().strip()
         if "hello" in command:
+            return {"action": "greet"}
+        elif any(kw in command for kw in ["add task", "schedule task", "schedule recurring"]):
+            if ":" in command:
+                parts = command.split(":", 1)
+                desc = parts[0].replace("add task", "").replace("schedule task", "").replace("schedule recurring", "").strip()
+                time_match = None
+                for t in ["at", "for", "in"]:
+                    if t in command:
+                        time_str = command.split(t)[1].strip()
+                        try:
+                            time_match = parse(time_str, fuzzy=True).strftime("%H:%M")
+                            break
+                        except ValueError:
+                            continue
+                if time_match:
+                    recurring = "recurring" in command
+                    return {"action": "schedule", "desc": desc, "time": time_match, "recurring": recurring}
+                return {"action": "add", "desc": desc}
+        elif "complete task" in command and ":" in command:
+            _, task_time = command.split(":", 1)
+            return {"action": "complete", "time": task_time.strip()}
+        elif "review completed" in command:
+            return {"action": "review"}
+        elif "list tasks" in command:
+            return {"action": "list"}
+        elif "clear tasks" in command:
+            return {"action": "clear"}
+        elif "exit" in command:
+            return {"action": "exit"}
+        return {"action": "unknown"}
+
+    def respond(self, command):
+        nlu_result = self.parse_nlu(command)
+        if nlu_result["action"] == "greet":
             self.state = "greeting"
             suggestion = self.suggest_task()
             return f"Hey there! I’m your {self.personality} agent, ready to assist! {suggestion}"
-        elif "add task" in command and ":" in command:
-            _, desc = command.split(":", 1)
+        elif nlu_result["action"] == "add":
             timestamp = datetime.now().strftime("%H:%M:%S")
-            self.tasks[timestamp] = desc.strip()
-            return f"Yay! Added task: {desc} at {timestamp}!"
-        elif "schedule task" in command and ":" in command:
-            parts = command.split(":", 1)[1].split(" at ")
-            if len(parts) == 2:
-                desc, time_str = parts
-                try:
-                    schedule_time = datetime.strptime(time_str.strip(), "%H:%M")
-                    schedule_time = schedule_time.replace(
-                        year=datetime.now().year,
-                        month=datetime.now().month,
-                        day=datetime.now().day
-                    )
-                    if schedule_time < datetime.now():
-                        schedule_time += timedelta(days=1)
-                    timestamp = schedule_time.strftime("%H:%M:%S")
-                    self.scheduled_tasks[timestamp] = {"desc": desc.strip(), "recurring": False}
-                    return f"Woo-hoo! Scheduled {desc} for {timestamp}!"
-                except ValueError:
-                    return "Oops! Use format 'schedule task:desc at HH:MM' (e.g., 14:00)."
-        elif "schedule recurring" in command and ":" in command:
-            parts = command.split(":", 1)[1].split(" at ")
-            if len(parts) == 2:
-                desc, time_str = parts
-                try:
-                    schedule_time = datetime.strptime(time_str.strip(), "%H:%M")
-                    schedule_time = schedule_time.replace(
-                        year=datetime.now().year,
-                        month=datetime.now().month,
-                        day=datetime.now().day
-                    )
-                    if schedule_time < datetime.now():
-                        schedule_time += timedelta(days=1)
-                    timestamp = schedule_time.strftime("%H:%M:%S")
-                    self.scheduled_tasks[timestamp] = {"desc": desc.strip(), "recurring": True}
-                    return f"Super! Scheduled recurring {desc} for {timestamp} daily!"
-                except ValueError:
-                    return "Oops! Use format 'schedule recurring:desc at HH:MM'."
-        elif "complete task" in command and ":" in command:
-            _, task_time = command.split(":", 1)
-            task_time = task_time.strip()
+            self.tasks[timestamp] = nlu_result["desc"]
+            return f"Yay! Added task: {nlu_result['desc']} at {timestamp}!"
+        elif nlu_result["action"] == "schedule":
+            try:
+                schedule_time = datetime.strptime(nlu_result["time"], "%H:%M")
+                schedule_time = schedule_time.replace(
+                    year=datetime.now().year,
+                    month=datetime.now().month,
+                    day=datetime.now().day
+                )
+                if schedule_time < datetime.now():
+                    schedule_time += timedelta(days=1)
+                timestamp = schedule_time.strftime("%H:%M:%S")
+                self.scheduled_tasks[timestamp] = {"desc": nlu_result["desc"], "recurring": nlu_result["recurring"]}
+                return f"Woo-hoo! Scheduled {nlu_result['desc']} for {timestamp}!"
+            except ValueError:
+                return "Oops! Couldn’t parse time. Use ‘at HH:MM’ or similar."
+        elif nlu_result["action"] == "complete":
+            task_time = nlu_result["time"]
             all_tasks = {**self.tasks, **{k: v["desc"] for k, v in self.scheduled_tasks.items()}}
             if any(task_time in t for t in all_tasks):
                 for t in list(self.tasks.keys()):
@@ -86,26 +105,26 @@ class ChattyAgent:
             elif task_time in self.completed_tasks:
                 return f"Already completed {task_time}: {self.completed_tasks[task_time]}!"
             return "Task not found! Use a time like '11:15:00'."
-        elif "review completed" in command:
+        elif nlu_result["action"] == "review":
             if self.completed_tasks:
                 return "Completed tasks:\n" + "\n".join(f"{t}: {d}" for t, d in self.completed_tasks.items())
             return "No tasks completed yet!"
-        elif "list tasks" in command:
+        elif nlu_result["action"] == "list":
             all_tasks = {**self.tasks, **{k: v["desc"] for k, v in self.scheduled_tasks.items()}}
             if all_tasks or self.completed_tasks:
                 return ("Your tasks:\n" + "\n".join(f"{t}: {d}" for t, d in all_tasks.items()) + 
                         "\nCompleted tasks:\n" + "\n".join(f"{t}: {d}" for t, d in self.completed_tasks.items()))
             return "No tasks yet—give me something to do!"
-        elif "clear tasks" in command:
+        elif nlu_result["action"] == "clear":
             self.tasks.clear()
             self.scheduled_tasks.clear()
             self.completed_tasks.clear()
             return "Tasks cleared! I’m all fresh now!"
-        elif "exit" in command:
+        elif nlu_result["action"] == "exit":
             self.state = "exiting"
             return "Catch you later! Saving my notes..."
         else:
-            return f"Oops! I’m puzzled. Try ‘hello’, ‘add task:desc’, ‘schedule task:desc at HH:MM’, ‘schedule recurring:desc at HH:MM’, ‘complete task:HH:MM:SS’, ‘review completed’, ‘list tasks’, ‘clear tasks’, or ‘exit’."
+            return f"Oops! I’m puzzled. Try natural commands like ‘hello’, ‘add task:desc’, ‘schedule task:desc at HH:MM’, ‘schedule recurring:desc at HH:MM’, ‘complete task:HH:MM:SS’, ‘review completed’, ‘list tasks’, ‘clear tasks’, or ‘exit’."
 
     def suggest_task(self):
         current_hour = datetime.now().hour
@@ -137,10 +156,12 @@ class ChattyAgent:
                 task_data = self.scheduled_tasks.get(timestamp)
                 if task_data:
                     print(f"⏰ Alert! Time to {task_data['desc']} at {timestamp}!")
-                    pygame.mixer.music.load("alert.wav")  # Requires an alert.wav file
-                    pygame.mixer.music.play()
-                    while pygame.mixer.music.get_busy():
-                        pygame.time.wait(100)
+                    if self.alert_sound:
+                        self.alert_sound.play()
+                    elif self.beep_sound:
+                        self.beep_sound.play()
+                    else:
+                        print("No sound available—check alert.wav or beep.wav.")
                     self.state = "greeting"
                     self.visualize()
                     time.sleep(1)
