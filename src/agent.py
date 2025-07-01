@@ -64,6 +64,20 @@ class ChattyAgent:
                     return f"Super! Scheduled recurring {desc} for {timestamp} daily!"
                 except ValueError:
                     return "Oops! Use format 'schedule recurring:desc at HH:MM'."
+        elif "complete task" in command and ":" in command:
+            _, task_time = command.split(":", 1)
+            task_time = task_time.strip()
+            all_tasks = {**self.tasks, **{k: v["desc"] for k, v in self.scheduled_tasks.items()}}
+            if any(task_time in t for t in all_tasks):
+                for t in list(self.tasks.keys()):
+                    if task_time in t:
+                        del self.tasks[t]
+                        return f"Great job! Marked {t}: {all_tasks[t]} as complete!"
+                for t in list(self.scheduled_tasks.keys()):
+                    if task_time in t:
+                        del self.scheduled_tasks[t]
+                        return f"Great job! Marked {t}: {all_tasks[t]} as complete!"
+            return "Task not found! Use a time like '11:10:00'."
         elif "list tasks" in command:
             all_tasks = {**self.tasks, **{k: v["desc"] for k, v in self.scheduled_tasks.items()}}
             if all_tasks:
@@ -77,7 +91,7 @@ class ChattyAgent:
             self.state = "exiting"
             return "Catch you later! Saving my notes..."
         else:
-            return f"Oops! I’m puzzled. Try ‘hello’, ‘add task:desc’, ‘schedule task:desc at HH:MM’, ‘schedule recurring:desc at HH:MM’, ‘list tasks’, ‘clear tasks’, or ‘exit’."
+            return f"Oops! I’m puzzled. Try ‘hello’, ‘add task:desc’, ‘schedule task:desc at HH:MM’, ‘schedule recurring:desc at HH:MM’, ‘complete task:HH:MM:SS’, ‘list tasks’, ‘clear tasks’, or ‘exit’."
 
     def visualize(self):
         self.screen.fill((0, 0, 0))
