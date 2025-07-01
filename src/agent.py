@@ -41,12 +41,30 @@ class ChattyAgent:
                     if schedule_time < datetime.now():
                         schedule_time += timedelta(days=1)
                     timestamp = schedule_time.strftime("%H:%M:%S")
-                    self.scheduled_tasks[timestamp] = desc.strip()
+                    self.scheduled_tasks[timestamp] = {"desc": desc.strip(), "recurring": False}
                     return f"Woo-hoo! Scheduled {desc} for {timestamp}!"
                 except ValueError:
                     return "Oops! Use format 'schedule task:desc at HH:MM' (e.g., 14:00)."
+        elif "schedule recurring" in command and ":" in command:
+            parts = command.split(":", 1)[1].split(" at ")
+            if len(parts) == 2:
+                desc, time_str = parts
+                try:
+                    schedule_time = datetime.strptime(time_str.strip(), "%H:%M")
+                    schedule_time = schedule_time.replace(
+                        year=datetime.now().year,
+                        month=datetime.now().month,
+                        day=datetime.now().day
+                    )
+                    if schedule_time < datetime.now():
+                        schedule_time += timedelta(days=1)
+                    timestamp = schedule_time.strftime("%H:%M:%S")
+                    self.scheduled_tasks[timestamp] = {"desc": desc.strip(), "recurring": True}
+                    return f"Super! Scheduled recurring {desc} for {timestamp} daily!"
+                except ValueError:
+                    return "Oops! Use format 'schedule recurring:desc at HH:MM'."
         elif "list tasks" in command:
-            all_tasks = {**self.tasks, **self.scheduled_tasks}
+            all_tasks = {**self.tasks, **{k: v["desc"] for k, v in self.scheduled_tasks.items()}}
             if all_tasks:
                 return "Your tasks:\n" + "\n".join(f"{t}: {d}" for t, d in all_tasks.items())
             return "No tasks yet—give me something to do!"
@@ -58,7 +76,7 @@ class ChattyAgent:
             self.state = "exiting"
             return "Catch you later! Saving my notes..."
         else:
-            return f"Oops! I’m puzzled. Try ‘hello’, ‘add task:desc’, ‘schedule task:desc at HH:MM’, ‘list tasks’, ‘clear tasks’, or ‘exit’."
+            return f"Oops! I’m puzzled. Try ‘hello’, ‘add task:desc’, ‘schedule task:desc at HH:MM’, ‘schedule recurring:desc at HH:MM’, ‘list tasks’, ‘clear tasks’, or ‘exit’."
 
     def visualize(self):
         self.screen.fill((0, 0, 0))
@@ -73,11 +91,24 @@ class ChattyAgent:
     def check_scheduled_tasks(self):
         current_time = datetime.now().strftime("%H:%M:%S")
         for timestamp in list(self.scheduled_tasks.keys()):
-            if timestamp <= current_time:
-                task = self.scheduled_tasks.pop(timestamp)
-                print(f"⏰ Alert! Time to {task} at {timestamp}!")
-                self.visualize()  # Flash the screen to notify
-                time.sleep(1)  # Brief pause
+            scheduled_dt = datetime.strptime(timestamp, "%H:%M:%S")
+            current_dt = datetime.strptime(current_time, "%H:%M:%S")
+            if scheduled_dt <= current_dt and timestamp in self.scheduled_tasks:
+                task_data = self.scheduled_tasks.pop(timestamp)
+                print(f"⏰ Alert! Time to {task_data['desc']} at {timestamp}!")
+                self.state = "greeting"
+                self.visualize()
+                time.sleep(1)
+                if task_data["recurring"]:
+                    # Reschedule for the next day
+                    schedule_time = datetime.strptime(timestamp, "%H:%M:%S")
+                    schedule_time = schedule_time.replace(
+                        year=datetime.now().year,
+                        month=datetime.now().month,
+                        day=datetime.now().day + 1
+                    )
+                    new_timestamp = schedule_time.strftime("%H:%M:%S")
+                    self.scheduled_tasks[new_timestamp] = task_data
 
     def run(self):
         running = True
@@ -97,7 +128,7 @@ class ChattyAgent:
                     elif event.unicode.isprintable():
                         self.input_buffer += event.unicode
                     self.visualize()
-            pygame.time.delay(1000)  # Increase delay to reduce CPU load
+            pygame.time.delay(1000)
         os.makedirs("data", exist_ok=True)
         with open("data/tasks.json", "w") as f:
             json.dump({"tasks": self.tasks, "scheduled_tasks": self.scheduled_tasks}, f, indent=4)
