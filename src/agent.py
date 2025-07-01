@@ -21,6 +21,7 @@ AGENT_COLOR_IDLE = (0, 200, 255)  # Light Blue
 AGENT_COLOR_GREETING = (0, 255, 0)  # Green
 AGENT_COLOR_EXITING = (255, 0, 0)  # Red
 AGENT_COLOR_ALERT = (255, 165, 0)  # Orange for alerts
+CHECK_INTERVAL = 5  # Check tasks every 5 seconds to reduce CPU usage
 
 class ChattyAgent:
     def __init__(self):
@@ -110,7 +111,7 @@ class ChattyAgent:
                 return {"action": "unknown", "message": "Please provide a task description after 'add task:'!"}
             return {"action": "add", "desc": desc}
 
-        elif any(kw in command for kw in ["schedule task", "schedule recurring"]) and ":" in command:
+        elif any(kw in command for kw in ["schedule task", "schedule recurring", "set priority"]) and ":" in command:
             parts = command.split(":", 1)
             action_part = parts[0].strip()
             remaining = parts[1].strip()
@@ -133,23 +134,30 @@ class ChattyAgent:
                 return {"action": "unknown", "message": f"Please provide a task description after '{action_part}:' (e.g., 'schedule task:check desk at 1:15')!"}
 
             time_match = None
-            time_keywords = ["at", "for", "in"]
-            for keyword in time_keywords:
-                if keyword in remaining:
-                    time_str = next((s.strip() for s in remaining.split(keyword)[1:] if s.strip()), "")
-                    if time_str:
-                        try:
-                            parsed_time = parse(time_str, fuzzy=True)
-                            time_match = parsed_time.strftime("%H:%M")
-                            break
-                        except ParserError:
-                            continue
-
-            if not time_match:
-                return {"action": "unknown", "message": f"Please specify a time after '{desc}' using 'at', 'for', or 'in' with a format like '1:15 PM' or '13:15'!"}
-
-            recurring = "recurring" in command
-            return {"action": "schedule", "desc": desc, "time": time_match, "recurring": recurring, "priority": priority}
+            if "schedule task" in action_part or "schedule recurring" in action_part:
+                time_keywords = ["at", "for", "in"]
+                for keyword in time_keywords:
+                    if keyword in remaining:
+                        time_str = next((s.strip() for s in remaining.split(keyword)[1:] if s.strip()), "")
+                        if time_str:
+                            try:
+                                parsed_time = parse(time_str, fuzzy=True)
+                                time_match = parsed_time.strftime("%H:%M")
+                                break
+                            except ParserError:
+                                continue
+                if not time_match:
+                    return {"action": "unknown", "message": f"Please specify a time after '{desc}' using 'at', 'for', or 'in' with a format like '1:15 PM' or '13:15'!"}
+                recurring = "recurring" in command
+                return {"action": "schedule", "desc": desc, "time": time_match, "recurring": recurring, "priority": priority}
+            elif "set priority" in action_part and ":" in remaining:
+                task_time = remaining.split(" to ")[0].strip() if " to " in remaining else remaining
+                new_priority_str = remaining.split(" to ")[1].strip() if " to " in remaining else ""
+                try:
+                    new_priority = max(1, min(5, int(new_priority_str)))  # Clamp priority between 1 and 5
+                    return {"action": "set_priority", "task_time": task_time, "priority": new_priority}
+                except ValueError:
+                    return {"action": "unknown", "message": f"Invalid priority value '{new_priority_str}'. Use 1-5 after 'to' (e.g., 'set priority:14:30:00 to 3')!"}
 
         elif "complete task" in command and ":" in command:
             _, task_identifier = command.split(":", 1)
@@ -203,6 +211,20 @@ class ChattyAgent:
             except ValueError:
                 response_text = "Oops! Couldn’t process the scheduled time. Internal time format issue."
 
+        elif nlu_result["action"] == "set_priority":
+            task_time = nlu_result["task_time"]
+            new_priority = nlu_result["priority"]
+            found = False
+            for timestamp in list(self.scheduled_tasks.keys()):
+                if task_time in timestamp:
+                    task_data = self.scheduled_tasks[timestamp]
+                    task_data["priority"] = new_priority
+                    response_text = f"Updated priority for '{task_data['desc']}' at {timestamp} to {new_priority}!"
+                    found = True
+                    break
+            if not found:
+                response_text = f"No scheduled task found with time '{task_time}'."
+
         elif nlu_result["action"] == "complete":
             task_identifier = nlu_result["identifier"].lower()
             found = False
@@ -253,7 +275,7 @@ class ChattyAgent:
             response_text = "Catch you later! Saving my notes..."
 
         elif nlu_result["action"] == "unknown":
-            response_text = nlu_result.get("message", f"Oops! I’m puzzled. Try natural commands like ‘hello’, ‘add task:desc’, ‘schedule task:desc at HH:MM’, ‘schedule recurring:desc at HH:MM’, ‘complete task:TIME_OR_DESC’, ‘review completed’, ‘list tasks’, ‘clear tasks’, or ‘exit’.")
+            response_text = nlu_result.get("message", f"Oops! I’m puzzled. Try natural commands like ‘hello’, ‘add task:desc’, ‘schedule task:desc at HH:MM’, ‘schedule recurring:desc at HH:MM’, ‘set priority:TIME to PRIORITY’, ‘complete task:TIME_OR_DESC’, ‘review completed’, ‘list tasks’, ‘clear tasks’, or ‘exit’.")
 
         self._add_response_to_display(response_text)
         return response_text
@@ -367,7 +389,7 @@ class ChattyAgent:
 
         while running:
             current_loop_time = time.time()
-            if current_loop_time - last_check_time >= 1:
+            if current_loop_time - last_check_time >= CHECK_INTERVAL:
                 self.check_scheduled_tasks()
                 last_check_time = current_loop_time
 
