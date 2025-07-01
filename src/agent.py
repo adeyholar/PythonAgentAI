@@ -10,7 +10,7 @@ class ChattyAgent:
         self.state = "idle"
         self.tasks = {}
         self.scheduled_tasks = {}
-        self.completed_tasks = {}  # New dictionary for completed tasks
+        self.completed_tasks = {}
         self.personality = "cheerful"
         self.input_buffer = ""
         pygame.init()
@@ -83,6 +83,10 @@ class ChattyAgent:
             elif task_time in self.completed_tasks:
                 return f"Already completed {task_time}: {self.completed_tasks[task_time]}!"
             return "Task not found! Use a time like '11:15:00'."
+        elif "review completed" in command:
+            if self.completed_tasks:
+                return "Completed tasks:\n" + "\n".join(f"{t}: {d}" for t, d in self.completed_tasks.items())
+            return "No tasks completed yet!"
         elif "list tasks" in command:
             all_tasks = {**self.tasks, **{k: v["desc"] for k, v in self.scheduled_tasks.items()}}
             if all_tasks or self.completed_tasks:
@@ -98,7 +102,7 @@ class ChattyAgent:
             self.state = "exiting"
             return "Catch you later! Saving my notes..."
         else:
-            return f"Oops! I’m puzzled. Try ‘hello’, ‘add task:desc’, ‘schedule task:desc at HH:MM’, ‘schedule recurring:desc at HH:MM’, ‘complete task:HH:MM:SS’, ‘list tasks’, ‘clear tasks’, or ‘exit’."
+            return f"Oops! I’m puzzled. Try ‘hello’, ‘add task:desc’, ‘schedule task:desc at HH:MM’, ‘schedule recurring:desc at HH:MM’, ‘complete task:HH:MM:SS’, ‘review completed’, ‘list tasks’, ‘clear tasks’, or ‘exit’."
 
     def visualize(self):
         self.screen.fill((0, 0, 0))
@@ -116,15 +120,16 @@ class ChattyAgent:
         for timestamp in list(self.scheduled_tasks.keys()):
             scheduled_dt = datetime.strptime(timestamp, "%H:%M:%S")
             current_dt = datetime.strptime(current_time, "%H:%M:%S")
-            if scheduled_dt <= current_dt and current_minute not in self.last_notified.get(timestamp, []):
-                task_data = self.scheduled_tasks.get(timestamp)  # Check without popping yet
+            if (scheduled_dt <= current_dt and 
+                current_minute not in self.last_notified.get(timestamp, []) and
+                timestamp in self.scheduled_tasks):
+                task_data = self.scheduled_tasks.get(timestamp)
                 if task_data:
                     print(f"⏰ Alert! Time to {task_data['desc']} at {timestamp}!")
                     self.state = "greeting"
                     self.visualize()
                     time.sleep(1)
                     if task_data["recurring"]:
-                        # Reschedule for the next day
                         schedule_time = datetime.strptime(timestamp, "%H:%M:%S")
                         schedule_time = schedule_time.replace(
                             year=datetime.now().year,
@@ -134,7 +139,7 @@ class ChattyAgent:
                         new_timestamp = schedule_time.strftime("%H:%M:%S")
                         self.scheduled_tasks[new_timestamp] = task_data
                     else:
-                        self.scheduled_tasks.pop(timestamp)  # Remove only non-recurring tasks
+                        self.scheduled_tasks.pop(timestamp)
                     self.last_notified.setdefault(timestamp, []).append(current_minute)
 
     def run(self):
