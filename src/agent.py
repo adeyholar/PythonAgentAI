@@ -7,11 +7,13 @@ import os
 class ChattyAgent:
     def __init__(self):
         self.state = "idle"
-        self.tasks = {}  # Task list with timestamps
-        self.personality = "cheerful"  # Can be "cheerful", "sarcastic", etc.
+        self.tasks = {}
+        self.personality = "cheerful"
+        self.input_buffer = ""
         pygame.init()
         self.screen = pygame.display.set_mode((400, 300))
         pygame.display.set_caption("Chatty Agent")
+        self.font = pygame.font.Font(None, 36)
 
     def respond(self, command):
         command = command.lower().strip()
@@ -37,11 +39,14 @@ class ChattyAgent:
             return f"Hmm, I’m stumped! Try ‘hello’, ‘add task:desc’, ‘list tasks’, ‘clear tasks’, or ‘exit’."
 
     def visualize(self):
-        self.screen.fill((0, 0, 0))  # Black background
+        self.screen.fill((0, 0, 0))
         if self.state == "greeting":
-            pygame.draw.circle(self.screen, (0, 255, 0), (200, 150), 50)  # Green circle
+            pygame.draw.circle(self.screen, (0, 255, 0), (200, 150), 50)
         elif self.state == "exiting":
-            pygame.draw.circle(self.screen, (255, 0, 0), (200, 150), 50)  # Red circle
+            pygame.draw.circle(self.screen, (255, 0, 0), (200, 150), 50)
+        # Display input buffer
+        text_surface = self.font.render(self.input_buffer, True, (255, 255, 255))
+        self.screen.blit(text_surface, (10, 10))
         pygame.display.flip()
 
     def run(self):
@@ -51,12 +56,17 @@ class ChattyAgent:
                 if event.type == pygame.QUIT:
                     running = False
                 elif event.type == pygame.KEYDOWN:
-                    if event.unicode:
-                        response = self.respond(event.unicode)
+                    if event.key == pygame.K_RETURN and self.input_buffer:
+                        response = self.respond(self.input_buffer)
                         print(response)
                         self.visualize()
+                        self.input_buffer = ""  # Clear after processing
+                    elif event.key == pygame.K_BACKSPACE:
+                        self.input_buffer = self.input_buffer[:-1]
+                    elif event.unicode.isprintable():
+                        self.input_buffer += event.unicode
+                    self.visualize()
             pygame.time.delay(100)
-        # Ensure data directory exists
         os.makedirs("data", exist_ok=True)
         with open("data/tasks.json", "w") as f:
             json.dump(self.tasks, f, indent=4)
